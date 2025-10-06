@@ -1,5 +1,5 @@
 import asyncio
-from steamdeck import SteamDeckInput, list_all_devices
+from steamdeck-hid import SteamDeckInput, list_all_devices
 
 # Optionally list devices to verify paths
 # list_all_devices()
