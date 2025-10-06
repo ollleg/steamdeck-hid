@@ -1,3 +1,6 @@
+# MIT License
+# Copyright (c) 2025 Oleh Polishchuk
+
 import asyncio
 from evdev import InputDevice, categorize, ecodes, list_devices
 import os
