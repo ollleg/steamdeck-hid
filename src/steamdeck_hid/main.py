@@ -79,9 +79,10 @@ class SteamDeckInput:
     HIDRAW_PATH = '/dev/hidraw2'
     PWR_DEVICE_PATH = '/dev/input/event5'  # The device path for power/volume buttons
 
-    def __init__(self, device_paths=None, hidraw_path=None):
+    def __init__(self, device_paths=None, hidraw_path=None, polling_interval=0.001):
         self.device_paths = device_paths or self.DEVICE_PATHS
         self.hidraw_path = hidraw_path or self.HIDRAW_PATH
+        self.polling_interval = polling_interval  # Interval in seconds
         self.general_buttons_state = {}
         self.pwr_buttons_state = {}
         self.listeners = []  # List of callbacks for change events
@@ -133,10 +134,10 @@ class SteamDeckInput:
             while True:
                 data = await asyncio.to_thread(h.read, 64, 5)
                 if not data or len(data) < 12:
-                    await asyncio.sleep(0.001)
+                    await asyncio.sleep(self.polling_interval)
                     continue
                 decode_steamdeck_report(data, self.general_buttons_state)
-                await asyncio.sleep(0.001)  # Reduced to 1ms to match high report rate
+                await asyncio.sleep(self.polling_interval)
         except hid.HIDException as e:
             print(f"HID error: {e}")
         except Exception as e:
@@ -156,7 +157,6 @@ class SteamDeckInput:
                 if val1 != val2:
                     is_stick = key in ["LEFT_STICK_X", "LEFT_STICK_Y", "RIGHT_STICK_X", "RIGHT_STICK_Y"]
                     is_pad = key in ["LEFT_PAD_X", "LEFT_PAD_Y", "RIGHT_PAD_X", "RIGHT_PAD_Y"]
-                    trigger_event = False
                     diff = 0
                     if not isinstance(val2, bool):
                         diff = abs(val2 - val1) 
@@ -165,7 +165,7 @@ class SteamDeckInput:
                         self.on_change(key, val2)
                         prev_state[key] = val2
 
-            await asyncio.sleep(0.001)  # Reduced to 1ms to match high report rate
+            await asyncio.sleep(self.polling_interval)
 
     async def start(self):
         """Start listening to inputs asynchronously."""

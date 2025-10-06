@@ -8,25 +8,29 @@ The library is designed for Linux systems (tested on Steam Deck with SteamOS) an
 - Asynchronous event reading from multiple input devices.
 - Support for buttons (A/B/X/Y, D-Pad, triggers, bumpers, etc.), analog sticks, touch pads, and power/volume buttons.
 - Customizable device paths for flexibility across different setups.
+- Adjustable polling interval to control responsiveness and CPU usage.
 - Event subscription model: Register callbacks to react to input changes.
 - Helper functions to list available devices and decode HID reports.
 - Lightweight with minimal dependencies.
 
 ## Installation
 
-Install the library via pip:
+Install the library via pip (works on Linux, macOS, and other platforms, but full functionality is Linux-only):
 
 ```bash
 pip install steamdeck-hid
 ```
 
+- On Linux/Steam Deck: Automatically includes all dependencies for full support.
+- On non-Linux systems (e.g., macOS, Windows): Installation succeeds, but usage of core features (e.g., `SteamDeckInput`) will raise an error indicating lack of support.
+
 ### Dependencies
-- `evdev`: For reading input events from `/dev/input/event*` devices.
-- `hid`: For raw HID report reading from `/dev/hidraw*`.
+- `hid`: For raw HID report reading (cross-platform, always installed).
+- `evdev`: For reading input events from `/dev/input/event*` devices (automatically installed on Linux only).
 
-These are automatically installed as dependencies. Note: This library is Linux-specific due to its reliance on `evdev` and HID raw devices.
+Note: This library is Linux-specific due to its reliance on `evdev` and HID raw devices. On non-Linux systems, you can still use standalone functions like `decode_steamdeck_report` (if they don't require `evdev`), but device reading features are unavailable.
 
-If you encounter permission issues (e.g., "Permission denied" when accessing devices), run your script with `sudo` or add your user to the `input` group:
+If you encounter permission issues on Linux (e.g., "Permission denied" when accessing devices), run your script with `sudo` or add your user to the `input` group:
 
 ```bash
 sudo usermod -aG input $USER
@@ -49,7 +53,8 @@ async def main():
     # Initialize with default paths (customize if needed)
     sdi = SteamDeckInput(
         device_paths=['/dev/input/event5', '/dev/input/event2', '/dev/input/event8', '/dev/input/event14'],
-        hidraw_path='/dev/hidraw2'
+        hidraw_path='/dev/hidraw2',
+        polling_interval=0.001  # Default: 1ms; adjust for CPU/responsiveness trade-off
     )
 
     # Define a callback for input changes
@@ -106,6 +111,15 @@ sdi = SteamDeckInput(
 
 The power/volume buttons are typically on one specific device (default: `/dev/input/event5`). The library handles this internally.
 
+### Adjusting Polling Interval
+To balance responsiveness and CPU usage, set the `polling_interval` (in seconds) during initialization. Lower values (e.g., 0.001 for 1ms) provide faster updates but may increase CPU load; higher values (e.g., 0.01 for 10ms) reduce CPU usage at the cost of slight delay.
+
+```python
+sdi = SteamDeckInput(polling_interval=0.01)  # 10ms interval
+```
+
+Default is 0.001 (1ms).
+
 ### Multiple Callbacks
 You can add multiple listeners:
 
@@ -159,6 +173,6 @@ See the [LICENSE](LICENSE) file for details.
 - **Device not found**: Use `list_all_devices()` to confirm paths. Update paths accordingly.
 - **Permission denied**: Run with `sudo` or adjust group permissions.
 - **No events**: Ensure the Steam Deck is connected and not in desktop mode with inputs routed elsewhere.
-- **High CPU usage**: The polling rate is 1ms; adjust `asyncio.sleep(0.001)` in the source if needed.
+- **High CPU usage**: Increase the `polling_interval` (e.g., to 0.01 for 10ms) to reduce polling frequency.
 
-For issues, open a ticket on the [GitHub repository](https://github.com/yourusername/steamdeck-hid) (replace with your actual repo URL).
+For issues, open a ticket on the [GitHub repository](https://github.com/ollleg/steamdeck-hid) (replace with your actual repo URL).

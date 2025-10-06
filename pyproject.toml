@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "steamdeck-hid" 
-version = "0.2.1" 
+version = "0.2.3" 
 authors = [
   { name = "Oleh Polishchuk", email = "olllejik@gmail.com" },
 ]
