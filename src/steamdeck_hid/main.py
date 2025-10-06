@@ -3,7 +3,7 @@
 
 import threading
 import time
-import queue
+import select
 from evdev import InputDevice, categorize, ecodes, list_devices
 import os
 import struct
@@ -124,20 +124,21 @@ class SteamDeckInput:
             with self.lock:
                 self.devices.append(device)
 
-            for event in device.read_loop():
-                if not self.running:
-                    break
-                if buttons_state is not None:
-                    if event.type == ecodes.EV_KEY:  # Button events
-                        key_event = categorize(event)
-                        if event.code in [114, 115, 116]:
-                            btn_map = {
-                                114: "VOLUME_DOWN",
-                                115: "VOLUME_UP",
-                                116: "POWER"
-                            }
-                            with self.lock:
-                                buttons_state[btn_map[event.code]] = key_event.keystate != 0
+            while self.running:
+                r, _, _ = select.select([device.fd], [], [], self.polling_interval)
+                if r:
+                    for event in device.read():
+                        if buttons_state is not None:
+                            if event.type == ecodes.EV_KEY:  # Button events
+                                key_event = categorize(event)
+                                if event.code in [114, 115, 116]:
+                                    btn_map = {
+                                        114: "VOLUME_DOWN",
+                                        115: "VOLUME_UP",
+                                        116: "POWER"
+                                    }
+                                    with self.lock:
+                                        buttons_state[btn_map[event.code]] = key_event.keystate != 0
         except Exception as e:
             print(f"Error reading ({device_path}): {e}")
         finally:
