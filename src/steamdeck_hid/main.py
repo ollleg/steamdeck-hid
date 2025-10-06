@@ -1,7 +1,9 @@
 # MIT License
 # Copyright (c) 2025 Oleh Polishchuk
 
-import asyncio
+import threading
+import time
+import queue
 from evdev import InputDevice, categorize, ecodes, list_devices
 import os
 import struct
@@ -85,28 +87,46 @@ class SteamDeckInput:
         self.polling_interval = polling_interval  # Interval in seconds
         self.general_buttons_state = {}
         self.pwr_buttons_state = {}
-        self.listeners = []  # List of callbacks for change events
-        self.tasks = []
+        self.event_queue = []  # List to hold events
+        self.lock = threading.Lock()  # Lock for thread-safe access to queue and states
         self.devices = []
+        self.threads = []
+        self.running = True
 
-    def add_listener(self, callback):
-        """Add a callback to be called on input changes. Callback signature: callback(key, value)"""
-        self.listeners.append(callback)
+        # Start threads for reading
+        for path in self.device_paths:
+            bs = self.pwr_buttons_state if path == self.PWR_DEVICE_PATH else None
+            t = threading.Thread(target=self._read_device_events, args=(path, bs), daemon=True)
+            self.threads.append(t)
+            t.start()
 
-    def on_change(self, key, value):
-        """Internal method to trigger listeners on change."""
-        for callback in self.listeners:
-            callback(key, value)
+        t = threading.Thread(target=self._read_hidraw, daemon=True)
+        self.threads.append(t)
+        t.start()
 
-    async def _read_device_events(self, device_path, buttons_state):
-        """Read events from a single device asynchronously."""
+        t = threading.Thread(target=self._process_inputs, daemon=True)
+        self.threads.append(t)
+        t.start()
+
+    def get_events(self):
+        """Retrieve and clear the list of events since the last call, similar to pygame.event.get()."""
+        with self.lock:
+            events = self.event_queue[:]
+            self.event_queue = []
+            return events
+
+    def _read_device_events(self, device_path, buttons_state):
+        """Read events from a single device synchronously."""
         device = None
         try:
             device = InputDevice(device_path)
             device.grab()  # Grab the device to monopolize input
-            self.devices.append(device)
+            with self.lock:
+                self.devices.append(device)
 
-            async for event in device.async_read_loop():
+            for event in device.read_loop():
+                if not self.running:
+                    break
                 if buttons_state is not None:
                     if event.type == ecodes.EV_KEY:  # Button events
                         key_event = categorize(event)
@@ -116,7 +136,8 @@ class SteamDeckInput:
                                 115: "VOLUME_UP",
                                 116: "POWER"
                             }
-                            buttons_state[btn_map[event.code]] = key_event.keystate != 0
+                            with self.lock:
+                                buttons_state[btn_map[event.code]] = key_event.keystate != 0
         except Exception as e:
             print(f"Error reading ({device_path}): {e}")
         finally:
@@ -126,18 +147,17 @@ class SteamDeckInput:
                 except Exception as e:
                     print(f"Error releasing {device_path}: {e}")
 
-    async def _read_hidraw(self):
-        """Read HID raw reports asynchronously."""
+    def _read_hidraw(self):
+        """Read HID raw reports synchronously."""
         h = None
         try:
             h = hid.Device(path=self.hidraw_path.encode())
-            while True:
-                data = await asyncio.to_thread(h.read, 64, 5)
-                if not data or len(data) < 12:
-                    await asyncio.sleep(self.polling_interval)
-                    continue
-                decode_steamdeck_report(data, self.general_buttons_state)
-                await asyncio.sleep(self.polling_interval)
+            while self.running:
+                data = h.read(64, timeout_ms=5)
+                if data and len(data) >= 12:
+                    with self.lock:
+                        decode_steamdeck_report(data, self.general_buttons_state)
+                time.sleep(self.polling_interval)
         except hid.HIDException as e:
             print(f"HID error: {e}")
         except Exception as e:
@@ -146,11 +166,12 @@ class SteamDeckInput:
             if h:
                 h.close()
 
-    async def _process_inputs(self):
-        """Process input states and detect changes."""
+    def _process_inputs(self):
+        """Process input states and detect changes synchronously."""
         prev_state = {}
-        while True:
-            all_buttons_state = {**self.general_buttons_state, **self.pwr_buttons_state}
+        while self.running:
+            with self.lock:
+                all_buttons_state = {**self.general_buttons_state, **self.pwr_buttons_state}
             for key, val2 in all_buttons_state.items():
                 default = 0 if isinstance(val2, (int, float)) else False
                 val1 = prev_state.get(key, default)
@@ -159,26 +180,21 @@ class SteamDeckInput:
                     is_pad = key in ["LEFT_PAD_X", "LEFT_PAD_Y", "RIGHT_PAD_X", "RIGHT_PAD_Y"]
                     diff = 0
                     if not isinstance(val2, bool):
-                        diff = abs(val2 - val1) 
-                        
-                    if (not is_stick and not is_pad) or (is_stick and diff>200) or (is_pad and diff>100):
-                        self.on_change(key, val2)
+                        diff = abs(val2 - val1)
+                    
+                    if (not is_stick and not is_pad) or (is_stick and diff > 200) or (is_pad and diff > 100):
+                        with self.lock:
+                            self.event_queue.append((key, val2))
                         prev_state[key] = val2
+            time.sleep(self.polling_interval)
 
-            await asyncio.sleep(self.polling_interval)
-
-    async def start(self):
-        """Start listening to inputs asynchronously."""
-        for path in self.device_paths:
-            bs = self.pwr_buttons_state if path == self.PWR_DEVICE_PATH else None
-            self.tasks.append(self._read_device_events(path, bs))
-        self.tasks.append(self._read_hidraw())
-        self.tasks.append(self._process_inputs())
-        try:
-            await asyncio.gather(*self.tasks, return_exceptions=True)
-        finally:
-            for device in self.devices:
-                try:
-                    device.ungrab()
-                except Exception:
-                    pass
+    def stop(self):
+        """Stop all threads and release resources."""
+        self.running = False
+        for t in self.threads:
+            t.join()
+        for device in self.devices:
+            try:
+                device.ungrab()
+            except Exception:
+                pass
