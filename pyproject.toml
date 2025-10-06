@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "steamdeck-hid" 
-version = "0.2.0" 
+version = "0.2.1" 
 authors = [
   { name = "Oleh Polishchuk", email = "olllejik@gmail.com" },
 ]
@@ -18,7 +18,7 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
 ]
 dependencies = [
-    "evdev>=1.9.2",
+    "evdev>=1.9.2 ; sys_platform == 'linux'",
     "hid>=1.0.8",
 ]
 
