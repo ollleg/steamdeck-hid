@@ -153,7 +153,7 @@ class SteamDeckInput:
         try:
             h = hid.Device(path=self.hidraw_path.encode())
             while self.running:
-                data = h.read(64, timeout_ms=5)
+                data = h.read(64, timeout=5)
                 if data and len(data) >= 12:
                     with self.lock:
                         decode_steamdeck_report(data, self.general_buttons_state)
