@@ -1,15 +1,15 @@
 # steamdeck-hid
 
-A reusable Python library for handling Steam Deck controller inputs using `evdev` and `hid`. This library allows you to monitor button presses, analog stick movements, touch pads, and other inputs from the Steam Deck in a non-blocking, asynchronous manner. It supports event subscription via callbacks, making it suitable for integration into games, automation scripts, or custom applications on SteamOS or other Linux environments.
+A reusable Python library for handling Steam Deck controller inputs using `evdev` and `hid`. This library allows you to monitor button presses, analog stick movements, touch pads, and other inputs from the Steam Deck using background threads for non-blocking operation in the main loop. It uses a polling model, making it suitable for integration into games, automation scripts, or custom applications on SteamOS or other Linux environments.
 
 The library is designed for Linux systems (tested on Steam Deck with SteamOS) and requires root privileges or appropriate permissions to access input devices (e.g., via `sudo` or adding your user to the `input` group).
 
 ## Features
-- Asynchronous event reading from multiple input devices.
+- Background thread-based event reading from multiple input devices for non-blocking main loop.
 - Support for buttons (A/B/X/Y, D-Pad, triggers, bumpers, etc.), analog sticks, touch pads, and power/volume buttons.
 - Customizable device paths for flexibility across different setups.
 - Adjustable polling interval to control responsiveness and CPU usage.
-- Event subscription model: Register callbacks to react to input changes.
+- Polling model: Retrieve events with `get_events()` similar to `pygame.event.get()`.
 - Helper functions to list available devices and decode HID reports.
 - Lightweight with minimal dependencies.
 
@@ -40,41 +40,33 @@ Log out and back in for changes to take effect.
 
 ## Quick Start
 
-Here's a basic example to get started. This script lists devices, initializes the input handler, subscribes to events, and prints changes:
+Here's a basic example to get started. This script lists devices, initializes the input handler, and polls for events in a loop:
 
 ```python
-import asyncio
+import time
 from steamdeck_hid import SteamDeckInput, list_all_devices
 
-async def main():
-    # Optional: List all available input devices to verify paths
-    list_all_devices()
+# Optional: List all available input devices to verify paths
+list_all_devices()
 
-    # Initialize with default paths (customize if needed)
-    sdi = SteamDeckInput(
-        device_paths=['/dev/input/event5', '/dev/input/event2', '/dev/input/event8', '/dev/input/event14'],
-        hidraw_path='/dev/hidraw2',
-        polling_interval=0.001  # Default: 1ms; adjust for CPU/responsiveness trade-off
-    )
+sdi = SteamDeckInput(
+    device_paths=['/dev/input/event5', '/dev/input/event2', '/dev/input/event8', '/dev/input/event14'],
+    hidraw_path='/dev/hidraw2',
+    polling_interval=0.001  # Default: 1ms; adjust for CPU/responsiveness trade-off
+)
 
-    # Define a callback for input changes
-    def my_callback(key, value):
-        print(f"Input event: '{key}' changed to {value}")
+print("Listening for Steam Deck inputs... Press Ctrl+C to stop.")
 
-    # Subscribe the callback
-    sdi.add_listener(my_callback)
-
-    # Start listening (runs indefinitely until interrupted)
-    print("Listening for Steam Deck inputs... Press Ctrl+C to stop.")
-    await sdi.start()
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Program terminated by user")
-    except Exception as e:
-        print(f"Error: {e}")
+try:
+    while True:
+        events = sdi.get_events()
+        for key, value in events:
+            print(f"Input event: '{key}' changed to {value}")
+        time.sleep(0.01)  # Small sleep to avoid high CPU in the main loop
+except KeyboardInterrupt:
+    print("Program terminated by user")
+finally:
+    sdi.stop()
 ```
 
 Run this script with:
@@ -120,21 +112,6 @@ sdi = SteamDeckInput(polling_interval=0.01)  # 10ms interval
 
 Default is 0.001 (1ms).
 
-### Multiple Callbacks
-You can add multiple listeners:
-
-```python
-def callback1(key, value):
-    if key == 'POWER':
-        print("Power button pressed!")
-
-def callback2(key, value):
-    print(f"Generic event: {key} = {value}")
-
-sdi.add_listener(callback1)
-sdi.add_listener(callback2)
-```
-
 ### Supported Inputs
 The library tracks the following keys in the state dictionary (booleans for buttons, integers for axes):
 
@@ -157,7 +134,7 @@ print(buttons_state)  # {'A': True, 'LEFT_STICK_X': 0, ...}
 ```
 
 ### Error Handling and Cleanup
-The library automatically grabs and ungrabs devices. On exit (e.g., Ctrl+C), it releases resources. Handle exceptions in your `main` function for robustness.
+The library automatically grabs and ungrabs devices. Always call `stop()` in a `finally` block to stop threads and release resources properly, especially on exit (e.g., Ctrl+C).
 
 ## Contributing
 Contributions are welcome! Fork the repository on GitHub, make changes, and submit a pull request. Please include tests and update documentation.
@@ -174,5 +151,6 @@ See the [LICENSE](LICENSE) file for details.
 - **Permission denied**: Run with `sudo` or adjust group permissions.
 - **No events**: Ensure the Steam Deck is connected and not in desktop mode with inputs routed elsewhere.
 - **High CPU usage**: Increase the `polling_interval` (e.g., to 0.01 for 10ms) to reduce polling frequency.
+- **Program doesn't exit on Ctrl+C**: Ensure `stop()` is called in a `finally` block after catching `KeyboardInterrupt`.
 
-For issues, open a ticket on the [GitHub repository](https://github.com/ollleg/steamdeck-hid) (replace with your actual repo URL).
+For issues, open a ticket on the [GitHub repository](https://github.com/ollleg/steamdeck-hid).
