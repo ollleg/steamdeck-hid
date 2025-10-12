@@ -1,6 +1,3 @@
-# MIT License
-# Copyright (c) 2025 Oleh Polishchuk
-
 import threading
 import time
 import select
@@ -77,13 +74,15 @@ def decode_steamdeck_report(data, buttons_state: dict):
     buttons_state["RIGHT_PAD_Y"] = struct.unpack('<h', data[22:24])[0]
 
 class SteamDeckInput:
-    DEVICE_PATHS = ['/dev/input/event5', '/dev/input/event2', '/dev/input/event8', '/dev/input/event14']
-    HIDRAW_PATH = '/dev/hidraw2'
-    PWR_DEVICE_PATH = '/dev/input/event5'  # The device path for power/volume buttons
+    DEVICE_NAMES = ["Power Button","AT Translated Set 2 keyboard"]  # Populate this list with device names, e.g., ['Steam Deck', 'Valve Software Steam Controller']
+    HIDRAW_VID = 0x28de
+    HIDRAW_PID = 0x1205
 
-    def __init__(self, device_paths=None, hidraw_path=None, polling_interval=0.001):
-        self.device_paths = device_paths or self.DEVICE_PATHS
-        self.hidraw_path = hidraw_path or self.HIDRAW_PATH
+    def __init__(self, device_names=None, hidraw_path=None, polling_interval=0.001):
+        self.device_names = device_names or self.DEVICE_NAMES
+        if not self.device_names:
+            raise ValueError("DEVICE_NAMES must be provided or set in the class.")
+        self.hidraw_path = hidraw_path or self._find_hidraw_path()
         self.polling_interval = polling_interval  # Interval in seconds
         self.general_buttons_state = {}
         self.pwr_buttons_state = {}
@@ -93,12 +92,10 @@ class SteamDeckInput:
         self.threads = []
         self.running = True
 
-        # Start threads for reading
-        for path in self.device_paths:
-            bs = self.pwr_buttons_state if path == self.PWR_DEVICE_PATH else None
-            t = threading.Thread(target=self._read_device_events, args=(path, bs), daemon=True)
-            self.threads.append(t)
-            t.start()
+        # Start thread for reading evdev devices
+        t = threading.Thread(target=self._read_device_events, daemon=True)
+        self.threads.append(t)
+        t.start()
 
         t = threading.Thread(target=self._read_hidraw, daemon=True)
         self.threads.append(t)
@@ -108,6 +105,15 @@ class SteamDeckInput:
         self.threads.append(t)
         t.start()
 
+    def _find_hidraw_path(self):
+        for device_info in hid.enumerate():
+            if device_info['vendor_id'] == self.HIDRAW_VID and device_info['product_id'] == self.HIDRAW_PID and device_info['usage_page'] == 65535:
+                path = device_info['path']
+                if isinstance(path, bytes):
+                    path = path.decode()
+                return path
+        raise ValueError("Steam Deck HID device not found")
+
     def get_events(self):
         """Retrieve and clear the list of events since the last call, similar to pygame.event.get()."""
         with self.lock:
@@ -115,38 +121,70 @@ class SteamDeckInput:
             self.event_queue = []
             return events
 
-    def _read_device_events(self, device_path, buttons_state):
-        """Read events from a single device synchronously."""
-        device = None
-        try:
-            device = InputDevice(device_path)
-            device.grab()  # Grab the device to monopolize input
-            with self.lock:
-                self.devices.append(device)
+    def _read_device_events(self):
+        """Read events from all devices matching DEVICE_NAMES synchronously."""
+        devices = []
+        all_paths = list_devices()
+        matching_paths = []
+        for path in all_paths:
+            try:
+                dev_check = InputDevice(path)
+                if dev_check.name in self.device_names:
+                    matching_paths.append(path)
+            except Exception as e:
+                print(f"Error checking {path}: {e}")
+                continue
 
-            while self.running:
-                r, _, _ = select.select([device.fd], [], [], self.polling_interval)
+        for path in matching_paths:
+            try:
+                dev = InputDevice(path)
+                print(f"{dev.name} {path} grabbed")
+                dev.grab()  # Grab the device to monopolize input
+                devices.append(dev)
+            except Exception as e:
+                print(f"Error grabbing {path}: {e}")
+
+        with self.lock:
+            self.devices.extend(devices)
+
+        while self.running:
+            if not devices:
+                time.sleep(self.polling_interval)
+                continue
+            try:
+                r, _, _ = select.select([dev.fd for dev in devices], [], [], self.polling_interval)
                 if r:
-                    for event in device.read():
-                        if buttons_state is not None:
-                            if event.type == ecodes.EV_KEY:  # Button events
-                                key_event = categorize(event)
-                                if event.code in [114, 115, 116]:
-                                    btn_map = {
-                                        114: "VOLUME_DOWN",
-                                        115: "VOLUME_UP",
-                                        116: "POWER"
-                                    }
-                                    with self.lock:
-                                        buttons_state[btn_map[event.code]] = key_event.keystate != 0
-        except Exception as e:
-            print(f"Error reading ({device_path}): {e}")
-        finally:
-            if device:
-                try:
-                    device.ungrab()
-                except Exception as e:
-                    print(f"Error releasing {device_path}: {e}")
+                    for fd in r:
+                        for dev in devices[:]:  # Copy to avoid runtime modification
+                            if dev.fd == fd:
+                                try:
+                                    for event in dev.read():
+                                        if event.type == ecodes.EV_KEY:  # Button events
+                                            key_event = categorize(event)
+                                            if event.code in [114, 115, 116]:
+                                                btn_map = {
+                                                    114: "VOLUME_DOWN",
+                                                    115: "VOLUME_UP",
+                                                    116: "POWER"
+                                                }
+                                                with self.lock:
+                                                    self.pwr_buttons_state[btn_map[event.code]] = key_event.keystate != 0
+                                except Exception as e:
+                                    print(f"Error reading {dev.path}: {e}")
+                                    devices.remove(dev)
+                                    try:
+                                        dev.ungrab()
+                                    except Exception as ue:
+                                        print(f"Error releasing {dev.path}: {ue}")
+            except Exception as e:
+                print(f"Error in select: {e}")
+                # Continue to next iteration
+
+        for dev in devices:
+            try:
+                dev.ungrab()
+            except Exception as e:
+                print(f"Error releasing device {dev.path}: {e}")
 
     def _read_hidraw(self):
         """Read HID raw reports synchronously."""
