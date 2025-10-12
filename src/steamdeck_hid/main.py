@@ -1,3 +1,7 @@
+# MIT License
+
+# Copyright (c) 2025 Oleh Polishchuk
+
 import threading
 import time
 import select

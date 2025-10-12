@@ -7,11 +7,14 @@ The library is designed for Linux systems (tested on Steam Deck with SteamOS) an
 ## Features
 - Background thread-based event reading from multiple input devices for non-blocking main loop.
 - Support for buttons (A/B/X/Y, D-Pad, triggers, bumpers, etc.), analog sticks, touch pads, and power/volume buttons.
-- Customizable device paths for flexibility across different setups.
+- Customizable device names for flexibility across different setups (dynamically discovers paths based on names).
+- Automatic discovery of HID raw path via vendor/product ID.
 - Adjustable polling interval to control responsiveness and CPU usage.
 - Polling model: Retrieve events with `get_events()` similar to `pygame.event.get()`.
+- Retrieve current state of all controls with `get_state()`.
 - Helper functions to list available devices and decode HID reports.
 - Lightweight with minimal dependencies.
+- Robust error handling: Skips problematic devices and continues reading from others.
 
 ## Installation
 
@@ -46,12 +49,11 @@ Here's a basic example to get started. This script lists devices, initializes th
 import time
 from steamdeck_hid import SteamDeckInput, list_all_devices
 
-# Optional: List all available input devices to verify paths
+# Optional: List all available input devices to verify names
 list_all_devices()
 
 sdi = SteamDeckInput(
-    device_paths=['/dev/input/event5', '/dev/input/event2', '/dev/input/event8', '/dev/input/event14'],
-    hidraw_path='/dev/hidraw2',
+    device_names=['Power Button', 'AT Translated Set 2 keyboard'],
     polling_interval=0.001  # Default: 1ms; adjust for CPU/responsiveness trade-off
 )
 
@@ -62,6 +64,12 @@ try:
         events = sdi.get_events()
         for key, value in events:
             print(f"Input event: '{key}' changed to {value}")
+        
+        # Optional: Get the current state of all controls
+        current_state = sdi.get_state()
+        if current_state:  # Print state occasionally or on change
+            print(f"Current state: {current_state}")
+        
         time.sleep(0.01)  # Small sleep to avoid high CPU in the main loop
 except KeyboardInterrupt:
     print("Program terminated by user")
@@ -91,17 +99,17 @@ Input event: 'VOLUME_UP' changed to True
 
 ## Advanced Usage
 
-### Customizing Device Paths
-If your Steam Deck's device paths differ (e.g., due to kernel updates or hardware variations), use `list_all_devices()` to identify them and pass custom paths:
+### Customizing Device Names
+If your Steam Deck's device names differ (e.g., due to kernel updates or hardware variations), use `list_all_devices()` to identify them and pass custom names:
 
 ```python
 sdi = SteamDeckInput(
-    device_paths=['/dev/input/eventX', '/dev/input/eventY'],  # Replace with your paths
-    hidraw_path='/dev/hidrawZ'
+    device_names=['Power Button', 'AT Translated Set 2 keyboard'],  # Replace with your device names
+    hidraw_path='/dev/hidraw2'  # Optional: Override automatic HID discovery
 )
 ```
 
-The power/volume buttons are typically on one specific device (default: `/dev/input/event5`). The library handles this internally.
+The power/volume buttons are typically on specific devices (e.g., "Power Button" for power and "AT Translated Set 2 keyboard" for volume). The library handles this internally and dynamically finds matching paths.
 
 ### Adjusting Polling Interval
 To balance responsiveness and CPU usage, set the `polling_interval` (in seconds) during initialization. Lower values (e.g., 0.001 for 1ms) provide faster updates but may increase CPU load; higher values (e.g., 0.01 for 10ms) reduce CPU usage at the cost of slight delay.
@@ -111,6 +119,16 @@ sdi = SteamDeckInput(polling_interval=0.01)  # 10ms interval
 ```
 
 Default is 0.001 (1ms).
+
+### Retrieving Current State
+Use `get_state()` to get a dictionary of the current state of all controls at any time:
+
+```python
+state = sdi.get_state()
+print(state)  # {'A': False, 'LEFT_STICK_X': 0, 'VOLUME_UP': False, ...}
+```
+
+This is useful for synchronous checks without relying on events.
 
 ### Supported Inputs
 The library tracks the following keys in the state dictionary (booleans for buttons, integers for axes):
@@ -134,7 +152,7 @@ print(buttons_state)  # {'A': True, 'LEFT_STICK_X': 0, ...}
 ```
 
 ### Error Handling and Cleanup
-The library automatically grabs and ungrabs devices. Always call `stop()` in a `finally` block to stop threads and release resources properly, especially on exit (e.g., Ctrl+C).
+The library automatically grabs and ungrabs devices, skipping any that cause errors (e.g., file not found) and continuing with others. Always call `stop()` in a `finally` block to stop threads and release resources properly, especially on exit (e.g., Ctrl+C).
 
 ## Contributing
 Contributions are welcome! Fork the repository on GitHub, make changes, and submit a pull request. Please include tests and update documentation.
@@ -147,7 +165,7 @@ Copyright (c) 2025 Oleh Polishchuk
 See the [LICENSE](LICENSE) file for details.
 
 ## Troubleshooting
-- **Device not found**: Use `list_all_devices()` to confirm paths. Update paths accordingly.
+- **Device not found**: Use `list_all_devices()` to confirm names. Update names accordingly.
 - **Permission denied**: Run with `sudo` or adjust group permissions.
 - **No events**: Ensure the Steam Deck is connected and not in desktop mode with inputs routed elsewhere.
 - **High CPU usage**: Increase the `polling_interval` (e.g., to 0.01 for 10ms) to reduce polling frequency.
