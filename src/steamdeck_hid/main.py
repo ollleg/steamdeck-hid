@@ -121,6 +121,12 @@ class SteamDeckInput:
             self.event_queue = []
             return events
 
+    def get_state(self):
+        """Retrieve the current state of all controls."""
+        with self.lock:
+            all_buttons_state = {**self.general_buttons_state, **self.pwr_buttons_state}
+            return all_buttons_state.copy()
+
     def _read_device_events(self):
         """Read events from all devices matching DEVICE_NAMES synchronously."""
         devices = []
