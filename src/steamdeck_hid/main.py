@@ -5,13 +5,30 @@
 import threading
 import time
 import select
-from evdev import InputDevice, categorize, ecodes, list_devices
 import os
 import struct
-import hid
+
+# Conditional import of evdev (Linux-only)
+try:
+    import hid
+    from evdev import InputDevice, categorize, ecodes, list_devices
+    _evdev_available = True
+except ImportError:
+    _evdev_available = False
+    InputDevice = None
+    categorize = None
+    ecodes = None
+    list_devices = None
+
+def is_initialized():
+    """Check if evdev is available and the module is properly initialized."""
+    return _evdev_available
 
 def list_all_devices():
     """List all available input devices with capabilities."""
+    if not _evdev_available:
+        print("evdev is not available on this platform (likely macOS/Windows)")
+        return []
     print("Available input devices:")
     devices = [InputDevice(path) for path in list_devices()]
     for device in devices:
@@ -83,6 +100,8 @@ class SteamDeckInput:
     HIDRAW_PID = 0x1205
 
     def __init__(self, device_names=None, hidraw_path=None, polling_interval=0.001):
+        if not _evdev_available:
+            raise RuntimeError("evdev is not available on this platform. SteamDeckInput requires Linux with evdev support.")
         self.device_names = device_names or self.DEVICE_NAMES
         if not self.device_names:
             raise ValueError("DEVICE_NAMES must be provided or set in the class.")
